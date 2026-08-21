@@ -49,7 +49,24 @@ class TestBustCachedEvents:
 
         deleted = connector.bust_cached_events(all_calendars=True)
 
-        assert deleted == 10
+        assert deleted == len(target_keys)
+        assert set(redis_instance.store) == set(unrelated_keys)
+
+    def test_deletes_every_key_when_bust_spans_multiple_delete_batches(self, make_redis_keyspace):
+        """bust_cached_events deletes in chunks of 500 while still scanning (calendar.py's own
+        `if len(batch) >= 500` branch) -- so a subscriber with more than 500 cached keys forces a
+        delete to happen mid-scan, not just after scan_iter is exhausted. Every other test here
+        stays under that threshold, so this is the only one that actually exercises it.
+        """
+        connector = BaseConnector(subscriber_id=1, calendar_id=None, redis_instance=None)
+        redis_instance, target_keys, unrelated_keys = make_redis_keyspace(
+            connector, target_count=600, unrelated_count=50, window=50
+        )
+        connector.redis_instance = redis_instance
+
+        deleted = connector.bust_cached_events(all_calendars=True)
+
+        assert deleted == len(target_keys)
         assert set(redis_instance.store) == set(unrelated_keys)
 
     def test_all_calendars_false_only_busts_that_calendar(self):

@@ -13,6 +13,7 @@ class ScanCursorFakeRedis:
     def __init__(self, window=4):
         self.store = {}
         self.window = window
+        self._scan_order = None
 
     def delete(self, *keys):
         removed = 0
@@ -22,10 +23,18 @@ class ScanCursorFakeRedis:
         return removed
 
     def scan(self, cursor, match=None):
-        keyspace = list(self.store)
-        window = keyspace[cursor : cursor + self.window]
-        cursor += len(window)
-        if cursor >= len(keyspace):
+        # A fresh walk (cursor == 0) snapshots the current key order and holds it for the whole
+        # walk, instead of recomputing list(self.store) on every call. Real callers -- including
+        # bust_cached_events itself once a subscriber has more than 500 cached keys -- delete
+        # keys mid-scan; recomputing on every call would shift the list underneath a positional
+        # cursor and skip keys. Keys deleted since the snapshot was taken are filtered out of
+        # each window rather than re-returned.
+        if cursor == 0:
+            self._scan_order = list(self.store)
+
+        window = [key for key in self._scan_order[cursor : cursor + self.window] if key in self.store]
+        cursor += self.window
+        if cursor >= len(self._scan_order):
             cursor = 0
         if match is not None:
             prefix = match[:-1] if match.endswith('*') else match
