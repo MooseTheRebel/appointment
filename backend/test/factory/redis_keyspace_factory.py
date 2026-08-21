@@ -41,9 +41,11 @@ class ScanCursorFakeRedis:
                 return
 
 
-def matching_key(connector, suffix):
-    """The Redis key bust_cached_events would target for this connector's subscriber/calendar."""
-    return f'{REDIS_REMOTE_EVENTS_KEY}:{connector.get_key_body(only_subscriber=True)}:{suffix}'
+def matching_key(connector, suffix, only_subscriber=True):
+    """The Redis key bust_cached_events would target for this connector; only_subscriber mirrors
+    its all_calendars argument (True = subscriber-wide, False = also scoped to calendar_id).
+    """
+    return f'{REDIS_REMOTE_EVENTS_KEY}:{connector.get_key_body(only_subscriber=only_subscriber)}:{suffix}'
 
 
 @pytest.fixture

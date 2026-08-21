@@ -14,7 +14,7 @@ import pytest
 
 from appointment.controller.calendar import BaseConnector
 from appointment.defines import REDIS_REMOTE_EVENTS_KEY
-from factory.redis_keyspace_factory import ScanCursorFakeRedis
+from factory.redis_keyspace_factory import ScanCursorFakeRedis, matching_key
 
 
 class TestBustCachedEvents:
@@ -28,7 +28,9 @@ class TestBustCachedEvents:
         )
         connector.redis_instance = redis_instance
 
-        # Precondition: the first window really is empty, with more keyspace left to walk.
+        # Precondition: the first window really is empty, with more keyspace left to walk. The
+        # pre-fix implementation read exactly this one scan() call, saw an empty result, and
+        # returned early -- busting nothing. This layout is what would have failed it.
         cursor, first_window = redis_instance.scan(0, match=f'{REDIS_REMOTE_EVENTS_KEY}:*')
         assert first_window == []
         assert cursor != 0
@@ -49,6 +51,24 @@ class TestBustCachedEvents:
 
         assert deleted == 10
         assert set(redis_instance.store) == set(unrelated_keys)
+
+    def test_all_calendars_false_only_busts_that_calendar(self):
+        """all_calendars=False scopes the match to subscriber_id AND calendar_id (get_key_body's
+        only_subscriber=False), unlike every other test here which busts subscriber-wide. A
+        second calendar for the same subscriber must survive a bust of the first.
+        """
+        redis_instance = ScanCursorFakeRedis(window=2)
+        target_calendar = BaseConnector(subscriber_id=1, calendar_id=10, redis_instance=redis_instance)
+        other_calendar = BaseConnector(subscriber_id=1, calendar_id=20, redis_instance=redis_instance)
+
+        target_keys = [matching_key(target_calendar, i, only_subscriber=False) for i in range(4)]
+        other_keys = [matching_key(other_calendar, i, only_subscriber=False) for i in range(4)]
+        redis_instance.store = dict.fromkeys(target_keys + other_keys, 'x')
+
+        deleted = target_calendar.bust_cached_events(all_calendars=False)
+
+        assert deleted == 4
+        assert set(redis_instance.store) == set(other_keys)
 
     def test_returns_zero_when_nothing_matches(self):
         connector = BaseConnector(subscriber_id=1, calendar_id=None, redis_instance=ScanCursorFakeRedis())
